@@ -16,8 +16,10 @@ package auth
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -31,8 +33,10 @@ import (
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
+	"github.com/Azure/go-autorest/autorest/azure/auth/internal/redirect"
 	"github.com/Azure/go-autorest/autorest/azure/cli"
 	"github.com/dimchansky/utfbom"
+	"github.com/pkg/browser"
 	"golang.org/x/crypto/pkcs12"
 )
 
@@ -708,5 +712,36 @@ func (mc MSIConfig) Authorizer() (autorest.Authorizer, error) {
 		}
 	}
 
+	return autorest.NewBearerAuthorizer(spToken), nil
+}
+
+func NewAuthorizerFromInteractiveLogon(tenantID string) (autorest.Authorizer, error) {
+	const authURLFormat = "https://login.microsoftonline.com/common/oauth2/authorize?response_type=code&client_id=%s&redirect_uri=%s&state=%s&resource=%s&prompt=select_account"
+	const clientID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+	rs := redirect.NewServer()
+	redirectURL := rs.Start()
+	defer rs.Stop()
+	state := func() string {
+		buff := make([]byte, 64)
+		rand.Read(buff)
+		return strings.ToLower(base64.StdEncoding.EncodeToString(buff)[:20])
+	}()
+	resource := "https://management.azure.com/"
+	authURL := fmt.Sprintf(authURLFormat, clientID, redirectURL, state, resource)
+	err := browser.OpenURL(authURL)
+	if err != nil {
+		return nil, err
+	}
+	rs.Wait()
+	// TODO: move args to settings
+	cfg, err := adal.NewOAuthConfig(azure.PublicCloud.ActiveDirectoryEndpoint, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	authCode := rs.QueryParams()["code"][0]
+	spToken, err := adal.NewServicePrincipalTokenFromAuthorizationCode(*cfg, clientID, "", authCode, redirectURL, resource)
+	if err != nil {
+		return nil, err
+	}
 	return autorest.NewBearerAuthorizer(spToken), nil
 }
