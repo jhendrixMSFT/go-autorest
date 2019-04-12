@@ -16,16 +16,15 @@ package auth
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"strings"
 	"unicode/utf16"
@@ -718,14 +717,17 @@ func (mc MSIConfig) Authorizer() (autorest.Authorizer, error) {
 func NewAuthorizerFromInteractiveLogon(tenantID string) (autorest.Authorizer, error) {
 	const authURLFormat = "https://login.microsoftonline.com/common/oauth2/authorize?response_type=code&client_id=%s&redirect_uri=%s&state=%s&resource=%s&prompt=select_account"
 	const clientID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-	rs := redirect.NewServer()
-	redirectURL := rs.Start()
-	defer rs.Stop()
 	state := func() string {
-		buff := make([]byte, 64)
-		rand.Read(buff)
-		return strings.ToLower(base64.StdEncoding.EncodeToString(buff)[:20])
+		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		buff := make([]byte, 20)
+		for i := range buff {
+			buff[i] = charset[rand.Intn(len(charset))]
+		}
+		return string(buff)
 	}()
+	rs := redirect.NewServer()
+	redirectURL := rs.Start(state)
+	defer rs.Stop()
 	resource := "https://management.azure.com/"
 	authURL := fmt.Sprintf(authURLFormat, clientID, redirectURL, state, resource)
 	err := browser.OpenURL(authURL)
@@ -738,7 +740,10 @@ func NewAuthorizerFromInteractiveLogon(tenantID string) (autorest.Authorizer, er
 	if err != nil {
 		return nil, err
 	}
-	authCode := rs.QueryParams()["code"][0]
+	authCode, err := rs.AuthorizationCode()
+	if err != nil {
+		return nil, err
+	}
 	spToken, err := adal.NewServicePrincipalTokenFromAuthorizationCode(*cfg, clientID, "", authCode, redirectURL, resource)
 	if err != nil {
 		return nil, err

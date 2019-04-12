@@ -2,9 +2,10 @@ package redirect
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
-	"net/url"
 	"sync"
 )
 
@@ -23,17 +24,32 @@ const okPage = `
 </html>
 `
 
+const failPage = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Login failed</title>
+</head>
+<body>
+    <h4>Some failures occurred during the authentication</h4>
+    <p>You can log an issue at <a href="https://github.com/azure/azure-cli/issues">Azure CLI GitHub Repository</a> and we will assist you in resolving it.</p>
+</body>
+</html>
+`
+
 type Server interface {
-	Start() string
+	Start(reqState string) string
 	Stop()
 	Wait()
-	QueryParams() url.Values
+	AuthorizationCode() (string, error)
 }
 
 type server struct {
-	wg *sync.WaitGroup
-	s  *http.Server
-	qp url.Values
+	wg   *sync.WaitGroup
+	s    *http.Server
+	code string
+	err  error
 }
 
 func NewServer() Server {
@@ -44,20 +60,34 @@ func NewServer() Server {
 	return rs
 }
 
-func (s *server) Start() string {
-	port := "8735"
-	s.s.Addr = fmt.Sprintf(":%s", port)
+func (s *server) Start(reqState string) string {
+	port := rand.Intn(600) + 8400
+	s.s.Addr = fmt.Sprintf(":%d", port)
 	s.s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(okPage))
+		defer s.wg.Done()
 		qp := r.URL.Query()
-		if len(qp) > 0 {
-			s.qp = qp
+		if respState, ok := qp["state"]; !ok {
+			s.err = errors.New("missing OAuth state")
+			return
+		} else if respState[0] != reqState {
+			s.err = errors.New("mismatched OAuth state")
+			return
 		}
-		s.wg.Done()
+		if err, ok := qp["error"]; ok {
+			w.Write([]byte(failPage))
+			s.err = fmt.Errorf("authentication error: %s; description: %s", err[0], qp.Get("error_description"))
+			return
+		}
+		if code, ok := qp["code"]; ok {
+			w.Write([]byte(okPage))
+			s.code = code[0]
+		} else {
+			s.err = errors.New("authorization code missing in query string")
+		}
 	})
-	s.wg.Add(2)
+	s.wg.Add(1)
 	go s.s.ListenAndServe()
-	return fmt.Sprintf("http://localhost:%s", port)
+	return fmt.Sprintf("http://localhost:%d", port)
 }
 
 func (s *server) Stop() {
@@ -68,6 +98,6 @@ func (s *server) Wait() {
 	s.wg.Wait()
 }
 
-func (s *server) QueryParams() url.Values {
-	return s.qp
+func (s *server) AuthorizationCode() (string, error) {
+	return s.code, s.err
 }
