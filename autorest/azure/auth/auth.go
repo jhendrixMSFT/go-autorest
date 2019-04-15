@@ -137,6 +137,14 @@ func (settings EnvironmentSettings) getClientAndTenant() (string, string) {
 	return clientID, tenantID
 }
 
+// returns the specified AAD endpoint or the public cloud endpoint if unspecified
+func (settings EnvironmentSettings) getAADEndpoint() string {
+	if v, ok := settings.Values[ActiveDirectoryEndpoint]; ok {
+		return v
+	}
+	return azure.PublicCloud.ActiveDirectoryEndpoint
+}
+
 // GetClientCredentials creates a config object from the available client credentials.
 // An error is returned if no client credentials are available.
 func (settings EnvironmentSettings) GetClientCredentials() (ClientCredentialsConfig, error) {
@@ -146,7 +154,7 @@ func (settings EnvironmentSettings) GetClientCredentials() (ClientCredentialsCon
 	}
 	clientID, tenantID := settings.getClientAndTenant()
 	config := NewClientCredentialsConfig(clientID, secret, tenantID)
-	config.AADEndpoint = settings.Environment.ActiveDirectoryEndpoint
+	config.AADEndpoint = settings.getAADEndpoint()
 	config.Resource = settings.Values[Resource]
 	return config, nil
 }
@@ -161,7 +169,7 @@ func (settings EnvironmentSettings) GetClientCertificate() (ClientCertificateCon
 	certPwd := settings.Values[CertificatePassword]
 	clientID, tenantID := settings.getClientAndTenant()
 	config := NewClientCertificateConfig(certPath, certPwd, clientID, tenantID)
-	config.AADEndpoint = settings.Environment.ActiveDirectoryEndpoint
+	config.AADEndpoint = settings.getAADEndpoint()
 	config.Resource = settings.Values[Resource]
 	return config, nil
 }
@@ -176,7 +184,7 @@ func (settings EnvironmentSettings) GetUsernamePassword() (UsernamePasswordConfi
 	}
 	clientID, tenantID := settings.getClientAndTenant()
 	config := NewUsernamePasswordConfig(username, password, clientID, tenantID)
-	config.AADEndpoint = settings.Environment.ActiveDirectoryEndpoint
+	config.AADEndpoint = settings.getAADEndpoint()
 	config.Resource = settings.Values[Resource]
 	return config, nil
 }
@@ -193,7 +201,7 @@ func (settings EnvironmentSettings) GetMSI() MSIConfig {
 func (settings EnvironmentSettings) GetDeviceFlow() DeviceFlowConfig {
 	clientID, tenantID := settings.getClientAndTenant()
 	config := NewDeviceFlowConfig(clientID, tenantID)
-	config.AADEndpoint = settings.Environment.ActiveDirectoryEndpoint
+	config.AADEndpoint = settings.getAADEndpoint()
 	config.Resource = settings.Values[Resource]
 	return config
 }
@@ -221,6 +229,25 @@ func (settings EnvironmentSettings) GetAuthorizer() (autorest.Authorizer, error)
 
 	// 4. MSI
 	return settings.GetMSI().Authorizer()
+}
+
+// GetServicePrincipalTokenFromInteractiveLogin creates a ServicePrincipalToken from the credentials
+// specified in a interactive login session using the default browser.
+func (settings EnvironmentSettings) GetServicePrincipalTokenFromInteractiveLogin() (*adal.ServicePrincipalToken, error) {
+	if tenant, ok := settings.Values[TenantID]; ok {
+		return newSPTFromInteractiveLogon(settings.getAADEndpoint(), tenant, settings.Values[Resource])
+	}
+	return nil, errors.New("missing tenant ID")
+}
+
+// GetAuthorizerFromInteractiveLogin creates an autorest.Authorizer from the credentials
+// specified in a interactive login session using the default browser.
+func (settings EnvironmentSettings) GetAuthorizerFromInteractiveLogin() (autorest.Authorizer, error) {
+	spToken, err := settings.GetServicePrincipalTokenFromInteractiveLogin()
+	if err != nil {
+		return nil, err
+	}
+	return autorest.NewBearerAuthorizer(spToken), nil
 }
 
 // NewAuthorizerFromFile creates an Authorizer configured from a configuration file in the following order.
@@ -714,10 +741,11 @@ func (mc MSIConfig) Authorizer() (autorest.Authorizer, error) {
 	return autorest.NewBearerAuthorizer(spToken), nil
 }
 
-func NewAuthorizerFromInteractiveLogon(tenantID string) (autorest.Authorizer, error) {
+func newSPTFromInteractiveLogon(adEndpoint, tenantID, resource string) (*adal.ServicePrincipalToken, error) {
 	const authURLFormat = "https://login.microsoftonline.com/common/oauth2/authorize?response_type=code&client_id=%s&redirect_uri=%s&state=%s&resource=%s&prompt=select_account"
 	const clientID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 	state := func() string {
+		// generate a 20-char random alpha-numeric string
 		const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 		buff := make([]byte, 20)
 		for i := range buff {
@@ -725,18 +753,19 @@ func NewAuthorizerFromInteractiveLogon(tenantID string) (autorest.Authorizer, er
 		}
 		return string(buff)
 	}()
+	// start local redirect server so login can call us back
 	rs := redirect.NewServer()
 	redirectURL := rs.Start(state)
 	defer rs.Stop()
-	resource := "https://management.azure.com/"
 	authURL := fmt.Sprintf(authURLFormat, clientID, redirectURL, state, resource)
+	// open browser window so user can select credentials
 	err := browser.OpenURL(authURL)
 	if err != nil {
 		return nil, err
 	}
-	rs.Wait()
-	// TODO: move args to settings
-	cfg, err := adal.NewOAuthConfig(azure.PublicCloud.ActiveDirectoryEndpoint, tenantID)
+	// now wait until the logic calls us back
+	rs.WaitForCallback()
+	cfg, err := adal.NewOAuthConfig(adEndpoint, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -744,9 +773,5 @@ func NewAuthorizerFromInteractiveLogon(tenantID string) (autorest.Authorizer, er
 	if err != nil {
 		return nil, err
 	}
-	spToken, err := adal.NewServicePrincipalTokenFromAuthorizationCode(*cfg, clientID, "", authCode, redirectURL, resource)
-	if err != nil {
-		return nil, err
-	}
-	return autorest.NewBearerAuthorizer(spToken), nil
+	return adal.NewServicePrincipalTokenFromAuthorizationCode(*cfg, clientID, "", authCode, redirectURL, resource)
 }

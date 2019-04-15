@@ -14,12 +14,11 @@ const okPage = `
 <html>
 <head>
     <meta charset="utf-8" />
-    <meta http-equiv="refresh" content="10;url=https://docs.microsoft.com/en-us/cli/azure/">
-    <title>Login successfully</title>
+    <title>Login Succeeded</title>
 </head>
 <body>
     <h4>You have logged into Microsoft Azure!</h4>
-    <p>You can close this window, or we will redirect you to the <a href="https://docs.microsoft.com/en-us/cli/azure/">Azure CLI documents</a> in 10 seconds.</p>
+    <p>You can now close this window.</p>
 </body>
 </html>
 `
@@ -29,19 +28,20 @@ const failPage = `
 <html>
 <head>
     <meta charset="utf-8" />
-    <title>Login failed</title>
+    <title>Login Failed</title>
 </head>
 <body>
-    <h4>Some failures occurred during the authentication</h4>
-    <p>You can log an issue at <a href="https://github.com/azure/azure-cli/issues">Azure CLI GitHub Repository</a> and we will assist you in resolving it.</p>
+    <h4>An error occurred during authentication</h4>
+    <p>Please open an issue in the <a href="https://github.com/azure/go-autorest/issues">Go Autorest repo</a> for assistance.</p>
 </body>
 </html>
 `
 
+// Server defines the methods for interacting with a local redirect server.
 type Server interface {
 	Start(reqState string) string
 	Stop()
-	Wait()
+	WaitForCallback()
 	AuthorizationCode() (string, error)
 }
 
@@ -52,6 +52,7 @@ type server struct {
 	err  error
 }
 
+// NewServer creates an object that satisfies the Server interface.
 func NewServer() Server {
 	rs := &server{
 		wg: &sync.WaitGroup{},
@@ -60,6 +61,8 @@ func NewServer() Server {
 	return rs
 }
 
+// Start starts the local HTTP server on a separate go routine.
+// The return value is the full URL plus port number.
 func (s *server) Start(reqState string) string {
 	port := rand.Intn(600) + 8400
 	s.s.Addr = fmt.Sprintf(":%d", port)
@@ -90,14 +93,17 @@ func (s *server) Start(reqState string) string {
 	return fmt.Sprintf("http://localhost:%d", port)
 }
 
+// Stop will shut down the local HTTP server.
 func (s *server) Stop() {
 	s.s.Shutdown(context.Background())
 }
 
-func (s *server) Wait() {
+// WaitForCallback will wait until Azure interactive login has called us back with an authorization code or error.
+func (s *server) WaitForCallback() {
 	s.wg.Wait()
 }
 
+// AuthorizationCode returns the authorization code or error result from the interactive login.
 func (s *server) AuthorizationCode() (string, error) {
 	return s.code, s.err
 }
