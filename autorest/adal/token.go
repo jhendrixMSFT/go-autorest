@@ -598,9 +598,7 @@ func NewServicePrincipalTokenFromAuthorizationCode(oauthConfig OAuthConfig, clie
 	if err := validateStringParam(clientID, "clientID"); err != nil {
 		return nil, err
 	}
-	/*if err := validateStringParam(clientSecret, "clientSecret"); err != nil {
-		return nil, err
-	}*/
+	// it's legal for clientSecret to be empty so don't validate it
 	if err := validateStringParam(authorizationCode, "authorizationCode"); err != nil {
 		return nil, err
 	}
