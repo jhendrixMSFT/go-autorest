@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v12.4.3
+
+### Bug Fixes
+
+- Revert changes to OpenCensus and OCAgent dependencies as it breaks upstream consumers due to `dep` not enforcing constraints on transitive dependencies.
+
 ## v12.4.2
 
 ### Bug Fixes
