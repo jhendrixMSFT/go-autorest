@@ -218,6 +218,19 @@ func IsTokenRefreshError(err error) bool {
 	return false
 }
 
+// UnwrapTokenRefreshError walks the chain of DetailedError.Original errors
+// to find the first error that satisfies the adal.TokenRefreshError interface.
+// It returns nil if not found.
+func UnwrapTokenRefreshError(err error) adal.TokenRefreshError {
+	if tre, ok := err.(adal.TokenRefreshError); ok {
+		return tre
+	}
+	if de, ok := err.(DetailedError); ok {
+		return UnwrapTokenRefreshError(de.Original)
+	}
+	return nil
+}
+
 // IsTemporaryNetworkError returns true if the specified error is a temporary network error or false
 // if it's not.  If the error doesn't implement the net.Error interface the return value is true.
 func IsTemporaryNetworkError(err error) bool {

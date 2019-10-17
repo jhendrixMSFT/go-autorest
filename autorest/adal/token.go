@@ -86,6 +86,7 @@ type MultitenantOAuthTokenProvider interface {
 type TokenRefreshError interface {
 	error
 	Response() *http.Response
+	Unwrap() error
 }
 
 // Refresher is an interface for token refresh functionality
@@ -736,6 +737,7 @@ func newServicePrincipalTokenFromMSI(msiEndpoint, resource string, userAssignedI
 type tokenRefreshError struct {
 	message string
 	resp    *http.Response
+	inner   error
 }
 
 // Error implements the error interface which is part of the TokenRefreshError interface.
@@ -748,8 +750,13 @@ func (tre tokenRefreshError) Response() *http.Response {
 	return tre.resp
 }
 
-func newTokenRefreshError(message string, resp *http.Response) TokenRefreshError {
-	return tokenRefreshError{message: message, resp: resp}
+// Unwrap returns the wrapped error; can return nil.
+func (tre tokenRefreshError) Unwrap() error {
+	return tre.inner
+}
+
+func newTokenRefreshError(message string, resp *http.Response, err error) TokenRefreshError {
+	return tokenRefreshError{message: message, resp: resp, inner: err}
 }
 
 // EnsureFresh will refresh the token if it will expire within the refresh window (as set by
@@ -887,8 +894,7 @@ func (spt *ServicePrincipalToken) refreshInternal(ctx context.Context, resource 
 		resp, err = spt.sender.Do(req)
 	}
 	if err != nil {
-		// don't return a TokenRefreshError here; this will allow retry logic to apply
-		return fmt.Errorf("adal: Failed to execute the refresh request. Error = '%v'", err)
+		return newTokenRefreshError(fmt.Sprintf("adal: Failed to execute the refresh request. Error = '%v'", err), resp, err)
 	}
 
 	defer resp.Body.Close()
@@ -896,25 +902,21 @@ func (spt *ServicePrincipalToken) refreshInternal(ctx context.Context, resource 
 
 	if resp.StatusCode != http.StatusOK {
 		if err != nil {
-			return newTokenRefreshError(fmt.Sprintf("adal: Refresh request failed. Status Code = '%d'. Failed reading response body: %v", resp.StatusCode, err), resp)
+			return newTokenRefreshError(fmt.Sprintf("adal: Refresh request failed. Status Code = '%d'. Failed reading response body: %v", resp.StatusCode, err), resp, err)
 		}
-		return newTokenRefreshError(fmt.Sprintf("adal: Refresh request failed. Status Code = '%d'. Response body: %s", resp.StatusCode, string(rb)), resp)
+		return newTokenRefreshError(fmt.Sprintf("adal: Refresh request failed. Status Code = '%d'. Response body: %s", resp.StatusCode, string(rb)), resp, err)
 	}
-
-	// for the following error cases don't return a TokenRefreshError.  the operation succeeded
-	// but some transient failure happened during deserialization.  by returning a generic error
-	// the retry logic will kick in (we don't retry on TokenRefreshError).
 
 	if err != nil {
-		return fmt.Errorf("adal: Failed to read a new service principal token during refresh. Error = '%v'", err)
+		return newTokenRefreshError(fmt.Sprintf("adal: Failed to read a new service principal token during refresh. Error = '%v'", err), resp, err)
 	}
 	if len(strings.Trim(string(rb), " ")) == 0 {
-		return fmt.Errorf("adal: Empty service principal token received during refresh")
+		return newTokenRefreshError(fmt.Sprintf("adal: Empty service principal token received during refresh"), resp, err)
 	}
 	var token Token
 	err = json.Unmarshal(rb, &token)
 	if err != nil {
-		return fmt.Errorf("adal: Failed to unmarshal the service principal token during refresh. Error = '%v' JSON = '%s'", err, string(rb))
+		return newTokenRefreshError(fmt.Sprintf("adal: Failed to unmarshal the service principal token during refresh. Error = '%v' JSON = '%s'", err, string(rb)), resp, err)
 	}
 
 	spt.inner.Token = token

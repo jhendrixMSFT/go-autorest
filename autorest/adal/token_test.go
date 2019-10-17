@@ -557,8 +557,10 @@ func TestServicePrincipalTokenEnsureFreshFails1(t *testing.T) {
 	if err == nil {
 		t.Fatal("adal: ServicePrincipalToken#EnsureFresh didn't return an error")
 	}
-	if _, ok := err.(TokenRefreshError); ok {
-		t.Fatal("adal: ServicePrincipalToken#EnsureFresh unexpected TokenRefreshError")
+	if tre, ok := err.(TokenRefreshError); !ok {
+		t.Fatal("adal: ServicePrincipalToken#EnsureFresh expected TokenRefreshError")
+	} else if tre.Unwrap() == nil {
+		t.Fatal("adal: ServicePrincipalToken#EnsureFresh unexpected nil inner error")
 	}
 }
 
