@@ -21,7 +21,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math"
 	"testing"
 	"time"
 )
@@ -51,11 +50,11 @@ func TestUnixTime_MarshalJSON(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.String(), func(subT *testing.T) {
-			var actual, expected float64
+			var actual, expected int64
 			var marshaled []byte
 
 			target := UnixTime(tc)
-			expected = float64(target.Duration().Nanoseconds()) / 1e9
+			expected = int64(target.Duration())
 
 			if temp, err := json.Marshal(target); err == nil {
 				marshaled = temp
@@ -70,9 +69,8 @@ func TestUnixTime_MarshalJSON(t *testing.T) {
 				return
 			}
 
-			diff := math.Abs(actual - expected)
-			subT.Logf("\ngot :\t%g\nwant:\t%g\ndiff:\t%g", actual, expected, diff)
-			if diff > 1e-9 { //Must be within 1 nanosecond of one another
+			subT.Logf("\ngot :\t%d\nwant:\t%d", actual, expected)
+			if actual != expected {
 				subT.Fail()
 			}
 		})
@@ -119,8 +117,8 @@ func TestUnixTime_JSONRoundTrip(t *testing.T) {
 		time.Date(2005, time.November, 5, 0, 0, 0, 0, time.UTC), // The day V for Vendetta (film) was released.
 		UnixEpoch().Add(-6 * time.Second),
 		UnixEpoch().Add(800 * time.Hour),
-		UnixEpoch().Add(time.Nanosecond),
-		time.Date(2015, time.September, 05, 4, 30, 12, 9992, time.UTC),
+		UnixEpoch().Add(time.Second),
+		time.Date(2015, time.September, 05, 4, 30, 12, 0, time.UTC),
 	}
 
 	for _, tc := range testCases {
@@ -140,10 +138,8 @@ func TestUnixTime_JSONRoundTrip(t *testing.T) {
 			}
 
 			actual := time.Time(unmarshaled)
-			diff := actual.Sub(tc)
-			subT.Logf("\ngot :\t%s\nwant:\t%s\ndiff:\t%s", actual.String(), tc.String(), diff.String())
-
-			if diff > time.Duration(100) { // We lose some precision be working in floats. We shouldn't lose more than 100 nanoseconds.
+			subT.Logf("\ngot :\t%s\nwant:\t%s", actual.String(), tc.String())
+			if actual != tc {
 				subT.Fail()
 			}
 		})

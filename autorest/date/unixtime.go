@@ -18,39 +18,41 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"time"
 )
 
-// unixEpoch is the moment in time that should be treated as timestamp 0.
-var unixEpoch = time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC)
-
-// UnixTime marshals and unmarshals a time that is represented as the number
-// of seconds (ignoring skip-seconds) since the Unix Epoch.
+// UnixTime provides marshalling and unmarshalling facilities of time.Time into or from Unix time format.
+// The format is the number of seconds elapsed from the Unix epoch.
 type UnixTime time.Time
 
-// Duration returns the time as a Duration since the UnixEpoch.
+// Duration returns the time.Time as a Duration since the Unix epoch.
 func (t UnixTime) Duration() time.Duration {
-	return time.Time(t).Sub(unixEpoch)
+	return time.Duration(time.Time(t).Unix())
 }
 
 // NewUnixTimeFromSeconds creates a UnixTime as a number of seconds from the UnixEpoch.
+// Deprecated: please use Unix time facilities in the standard library.
 func NewUnixTimeFromSeconds(seconds float64) UnixTime {
 	return NewUnixTimeFromDuration(time.Duration(seconds * float64(time.Second)))
 }
 
 // NewUnixTimeFromNanoseconds creates a UnixTime as a number of nanoseconds from the UnixEpoch.
+// Deprecated: please use Unix time facilities in the standard library.
 func NewUnixTimeFromNanoseconds(nanoseconds int64) UnixTime {
 	return NewUnixTimeFromDuration(time.Duration(nanoseconds))
 }
 
 // NewUnixTimeFromDuration creates a UnixTime as a duration of time since the UnixEpoch.
+// Deprecated: please use Unix time facilities in the standard library.
 func NewUnixTimeFromDuration(dur time.Duration) UnixTime {
-	return UnixTime(unixEpoch.Add(dur))
+	return UnixTime(UnixEpoch().Add(dur))
 }
 
 // UnixEpoch retreives the moment considered the Unix Epoch. I.e. The time represented by '0'
 func UnixEpoch() time.Time {
-	return unixEpoch
+	return time.Unix(0, 0)
 }
 
 // MarshalJSON preserves the UnixTime as a JSON number conforming to Unix Timestamp requirements.
@@ -58,7 +60,7 @@ func UnixEpoch() time.Time {
 func (t UnixTime) MarshalJSON() ([]byte, error) {
 	buffer := &bytes.Buffer{}
 	enc := json.NewEncoder(buffer)
-	err := enc.Encode(float64(time.Time(t).UnixNano()) / 1e9)
+	err := enc.Encode(time.Time(t).Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -70,35 +72,33 @@ func (t UnixTime) MarshalJSON() ([]byte, error) {
 func (t *UnixTime) UnmarshalJSON(text []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(text))
 
-	var secondsSinceEpoch float64
+	var secondsSinceEpoch int64
 	if err := dec.Decode(&secondsSinceEpoch); err != nil {
 		return err
 	}
 
-	*t = NewUnixTimeFromSeconds(secondsSinceEpoch)
+	*t = UnixTime(time.Unix(secondsSinceEpoch, 0))
 
 	return nil
 }
 
-// MarshalText stores the number of seconds since the Unix Epoch as a textual floating point number.
+// MarshalText returns the number of seconds since the Unix Epoch as an int64 in text format.
 func (t UnixTime) MarshalText() ([]byte, error) {
-	cast := time.Time(t)
-	return cast.MarshalText()
+	s := fmt.Sprintf("%d", time.Time(t).Unix())
+	return []byte(s), nil
 }
 
 // UnmarshalText populates a UnixTime with a value stored textually as a floating point number of seconds since the Unix Epoch.
 func (t *UnixTime) UnmarshalText(raw []byte) error {
-	var unmarshaled time.Time
-
-	if err := unmarshaled.UnmarshalText(raw); err != nil {
+	ut, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
 		return err
 	}
-
-	*t = UnixTime(unmarshaled)
+	*t = UnixTime(time.Unix(ut, 0))
 	return nil
 }
 
-// MarshalBinary converts a UnixTime into a binary.LittleEndian float64 of nanoseconds since the epoch.
+// MarshalBinary converts a UnixTime into a binary.LittleEndian int64 of seconds since the epoch.
 func (t UnixTime) MarshalBinary() ([]byte, error) {
 	buf := &bytes.Buffer{}
 
@@ -111,7 +111,7 @@ func (t UnixTime) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// UnmarshalBinary converts a from a binary.LittleEndian float64 of nanoseconds since the epoch into a UnixTime.
+// UnmarshalBinary converts a from a binary.LittleEndian int64 of seconds since the epoch into a UnixTime.
 func (t *UnixTime) UnmarshalBinary(raw []byte) error {
 	var nanosecondsSinceEpoch int64
 
