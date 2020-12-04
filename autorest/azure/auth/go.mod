@@ -10,3 +10,5 @@ require (
 	github.com/Azure/go-autorest/logger v0.2.0
 	github.com/dimchansky/utfbom v1.1.0
 )
+
+replace github.com/Azure/go-autorest/autorest/adal => ../../adal
